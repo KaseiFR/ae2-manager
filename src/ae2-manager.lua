@@ -28,6 +28,7 @@ local filesystem = require('filesystem')
 local serialization = require('serialization')
 local thread = require('thread')
 local tty = require('tty')
+local unicode = require('unicode')
 local GUI = require('GUI')
 -- local inspect = require('inspect')
 
@@ -512,29 +513,45 @@ function buildGui()
     configView.hidden = true
 
     -- left panel (item select)
-    local itemListPanel = configView:addChild(GUI.list(2, 2, configView.width/2-1, configView.height-2, 1, 0,
-            C_BADGE, C_BADGE_TEXT, C_STATUS_BAR, C_STATUS_TEXT, C_BADGE_SELECTED, C_BADGE_TEXT))
+    local itemListSearch = configView:addChild(GUI.input(2, 2, configView.width/2-1, 3,
+            C_INPUT, C_INPUT_TEXT, C_INPUT_TEXT, C_STATUS_PRESSED, C_INPUT_TEXT, '', 'Search'))
+
+    local itemListPanel = configView:addChild(GUI.list(
+            itemListSearch.x, itemListSearch.y + itemListSearch.height + 1, itemListSearch.width, configView.height-itemListSearch.height-3,
+            1, 0, C_BADGE, C_BADGE_TEXT, C_STATUS_BAR, C_STATUS_TEXT, C_BADGE_SELECTED, C_BADGE_TEXT
+    ))
     itemListPanel.selectedItem = -1
     --itemListPanel:setAlignment(GUI.ALIGNMENT_HORIZONTAL_LEFT, GUI.ALIGNMENT_VERTICAL_TOP)
-    attachScrollbar(itemListPanel).onTouch = function()
-        -- Reset the selected item when scrolling
-        -- TODO: find a way to follow the scroll
-        itemListPanel.selectedItem = -1
-    end
+    attachScrollbar(itemListPanel)
 
-    -- TODO: allow filtering by name, status
     override(itemListPanel, 'draw', function (super, self, ...)
+        self.selectedItem = -1
         self.children = {}
 
-        self.scrollBar.maximumValue = math.max(0, #recipes - self.height)
+        local selection = recipes
+        local filter = itemListSearch.text
+        if filter and filter ~= '' then
+            filter = unicode.lower(filter)
+            selection = {}
+            for _, recipe in ipairs(recipes) do
+                -- Patterns seem very limited, no case-insensitive option
+                if unicode.lower(recipe.label):find(filter) then
+                    table.insert(selection, recipe)
+                end
+            end
+        end
+
+        self.scrollBar.maximumValue = math.max(0, #selection - self.height)
         self.scrollBar.shownValueCount =  self.scrollBar.maximumValue / (self.scrollBar.maximumValue + 1)
 
-        local from = self.scrollBar.value + 1
-        local to = math.min(from + self.height, #recipes)
-        for i = from, to do
-            local recipe = recipes[i]
+        local offset = self.scrollBar.value
+        for i = 1, math.min(self.height, #selection) do
+            local recipe = selection[offset + i]
             local choice = self:addItem(recipe.label)
             --choice.colors.default.background = (recipe.error ~= nil) and C_BADGE_ERR or recipe.wanted > 0 and C_BADGE_BUSY or C_BADGE
+            if recipe == configView[SYMBOL_CONFIG_RECIPE] then
+                self.selectedItem = i
+            end
             choice.onTouch = function(app, object)
                 configView[SYMBOL_CONFIG_RECIPE] = recipe
                 event.push('config_recipe_change')
