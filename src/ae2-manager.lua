@@ -39,7 +39,7 @@ local allowedCpus = -2
 -- Maximum size of the crafting requests
 local maxBatch = 64
 -- How often to check the AE system, in second
-local checkInterval = 10
+local checkInterval = 5
 -- Where to save the config
 local configPath = '/home/ae2-manager.cfg'
 
@@ -459,6 +459,8 @@ local C_BADGE_SELECTED = 0xFFAA00
 local C_BADGE_TEXT = 0x1E1E1E
 local C_INPUT = 0xFFFFFF
 local C_INPUT_TEXT = 0x1E1E1E
+local C_SCROLLBAR = C_BADGE_SELECTED
+local C_SCROLLBAR_BACKGROUND = 0xFFFFFF
 
 function buildGui()
     local app = GUI.application()
@@ -514,16 +516,24 @@ function buildGui()
             C_BADGE, C_BADGE_TEXT, C_STATUS_BAR, C_STATUS_TEXT, C_BADGE_SELECTED, C_BADGE_TEXT))
     itemListPanel.selectedItem = -1
     --itemListPanel:setAlignment(GUI.ALIGNMENT_HORIZONTAL_LEFT, GUI.ALIGNMENT_VERTICAL_TOP)
+    attachScrollbar(itemListPanel).onTouch = function()
+        -- Reset the selected item when scrolling
+        -- TODO: find a way to follow the scroll
+        itemListPanel.selectedItem = -1
+    end
 
-    -- TODO: allow filtering by name, status and scroll
+    -- TODO: allow filtering by name, status
+    override(itemListPanel, 'draw', function (super, self, ...)
+        self.children = {}
 
-    itemListPanel:addChild(GUI.text(5,5, 0xFF0000, "itemConfigPanel 2")) -- TODO
+        self.scrollBar.maximumValue = math.max(0, #recipes - self.height)
+        self.scrollBar.shownValueCount =  self.scrollBar.maximumValue / (self.scrollBar.maximumValue + 1)
 
-    override(itemListPanel, 'draw', function (super, ...)
-        itemListPanel.children = {}
-
-        for _, recipe in ipairs(recipes) do
-            local choice = itemListPanel:addItem(recipe.label)
+        local from = self.scrollBar.value + 1
+        local to = math.min(from + self.height, #recipes)
+        for i = from, to do
+            local recipe = recipes[i]
+            local choice = self:addItem(recipe.label)
             --choice.colors.default.background = (recipe.error ~= nil) and C_BADGE_ERR or recipe.wanted > 0 and C_BADGE_BUSY or C_BADGE
             choice.onTouch = function(app, object)
                 configView[SYMBOL_CONFIG_RECIPE] = recipe
@@ -531,7 +541,7 @@ function buildGui()
             end
         end
 
-        super(...)
+        super(self, ...)
     end)
 
     -- right panel (item details)
@@ -585,6 +595,24 @@ function buildGui()
     end
 
     return app
+end
+
+function attachScrollbar(obj)
+    local width = (obj.width > 60) and 2 or 1
+    obj.width = obj.width - width
+    local bar = GUI.scrollBar(obj.x+obj.width, obj.y, width, obj.height, C_SCROLLBAR_BACKGROUND, C_SCROLLBAR,
+            0, 1, 0, 1, 1, false)
+    obj.parent:addChild(bar)
+    obj.scrollBar = bar
+
+    override(obj, 'eventHandler', function (super, app, self, key, ...)
+        if key == 'scroll' then -- forward scrolls on the main object to the scrollbar
+            bar.eventHandler(app, bar, key, ...)
+        end
+        super(app, self, key, ...)
+    end)
+
+    return bar
 end
 
 -- Start the program
