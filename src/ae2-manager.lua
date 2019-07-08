@@ -111,6 +111,10 @@ function log(...)
     io.stderr:write('\n')
 end
 
+function pretty(x)
+    return serialization.serialize(x, true)
+end
+
 function initAe2()
     local function test_ae2(id)
         local proxy = component.proxy(id)
@@ -234,7 +238,7 @@ function loadCraftables()
     local craftables, err = ae2.getCraftables()
     if err then
         log('ae2.getCraftables', err)
-        craftables = {}
+        return
     end
     for i, craftable in ipairs(craftables) do
         craftables[i] = craftable.getItemStack()
@@ -242,7 +246,8 @@ function loadCraftables()
 
     -- Ignore the craftables we already know
     for _, recipe in ipairs(recipes) do
-        for i, candidate in ipairs(craftables) do
+        -- Using pairs() because craftables is a sparse array
+        for i, candidate in pairs(craftables) do
             if contains(candidate, recipe.item) then
                 craftables[i] = nil
             end
@@ -250,7 +255,7 @@ function loadCraftables()
     end
 
     -- Add new recipes
-    for _, craftable in ipairs(craftables) do
+    for _, craftable in pairs(craftables) do
         table.insert(recipes, {
             item = {
                 name = craftable.name,
@@ -361,8 +366,8 @@ function equals(t1, t2)
 end
 
 function contains(haystack, needle)
-    if t1 == t2 then return true end
-    if type(t1) ~= type(t2) or type(t1) ~= 'table' then return false end
+    if haystack == needle then return true end
+    if type(haystack) ~= type(needle) or type(haystack) ~= 'table' then return false end
 
     for k, v in pairs(needle) do
         if not contains(haystack[k], v) then return false end
