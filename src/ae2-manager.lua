@@ -64,27 +64,28 @@ function main()
     ae2Run()
 
     local app = buildGui()
+    app:draw(true)
 
     -- Start some background tasks
     local background = {}
     table.insert(background, event.listen("key_up", function (key, address, char)
         if char == string.byte('q') then
-            app:stop()
+            event.push('exit')
         end
     end))
     table.insert(background, event.listen("redraw", function (key) app:draw() end))
-    table.insert(background, event.listen("reload_recipes", loadCraftables))
-    table.insert(background, event.timer(.5, checkCrafting, math.huge))
-    -- The AE loop is extremely slow (probably because of FFI or balance), and scale linearly with the number of recipes
-    table.insert(background, thread.create(ae2Loop))
+    table.insert(background, event.listen("reload_recipes", failFast(loadCraftables)))
+    table.insert(background, event.timer(.5, failFast(checkCrafting), math.huge))
+    -- The AE loop is extremely slow (probably because of FFI or balance), and scales badly with the number of recipes
+    table.insert(background, thread.create(failFast(ae2Loop)))
+    table.insert(background, thread.create(failFast(function() app:start() end)))
 
-    -- Run the GUI until stopped
-    local ok, err = xpcall(function ()
-        app:draw(true)
-        app:start()
-    end, debug.traceback)
+    -- Block until we receive the exit signal
+    local _, err = event.pull("exit")
 
     -- Cleanup
+    app:stop()
+
     for _, b in ipairs(background) do
         if type(b) == 'table' and b.kill then
             b:kill()
@@ -97,9 +98,11 @@ function main()
     tty.gpu().setForeground(resetFColor)
     tty.clear()
 
-    if not ok then
+    if err then
         io.stderr:write(err)
         os.exit(1)
+    else
+        os.exit(0)
     end
 end
 
@@ -114,6 +117,16 @@ end
 
 function pretty(x)
     return serialization.serialize(x, true)
+end
+
+function failFast(fn)
+    return function(...)
+        local res = table.pack(xpcall(fn, debug.traceback, ...))
+        if not res[1] then
+            event.push('exit', res[2])
+        end
+        return table.unpack(res, 2)
+    end
 end
 
 function initAe2()
@@ -516,6 +529,8 @@ function buildGui()
     local itemListSearch = configView:addChild(GUI.input(2, 2, configView.width/2-1, 3,
             C_INPUT, C_INPUT_TEXT, C_INPUT_TEXT, C_STATUS_PRESSED, C_INPUT_TEXT, '', 'Search'))
 
+    -- TODO: add unconfigured/hidden filter
+
     local itemListPanel = configView:addChild(GUI.list(
             itemListSearch.x, itemListSearch.y + itemListSearch.height + 1, itemListSearch.width, configView.height-itemListSearch.height-3,
             1, 0, C_BADGE, C_BADGE_TEXT, C_STATUS_BAR, C_STATUS_TEXT, C_BADGE_SELECTED, C_BADGE_TEXT
@@ -587,6 +602,8 @@ function buildGui()
                 event.push('ae2_loop')
             end
 
+            -- TODO: add remove/hide option
+
             -- self:draw()
             event.push('redraw') -- There is probably a more elegant way to do it ¯\_(ツ)_/¯
         end
@@ -608,7 +625,7 @@ function buildGui()
         configView.hidden = not object.pressed
     end
     statusBar:addChild(GUI.button(statusBar.width - 6, 1, 8, 1, C_STATUS_BAR, C_STATUS_TEXT, C_STATUS_BAR, C_STATUS_PRESSED, '[Exit]')).onTouch = function(app, object)
-        app:stop()
+        event.push('exit')
     end
 
     return app
@@ -618,7 +635,7 @@ function attachScrollbar(obj)
     local width = (obj.width > 60) and 2 or 1
     obj.width = obj.width - width
     local bar = GUI.scrollBar(obj.x+obj.width, obj.y, width, obj.height, C_SCROLLBAR_BACKGROUND, C_SCROLLBAR,
-            0, 1, 0, 1, 1, false)
+            0, 1, 0, 1, 4, false)
     obj.parent:addChild(bar)
     obj.scrollBar = bar
 
