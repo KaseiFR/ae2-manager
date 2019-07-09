@@ -257,10 +257,10 @@ function loadCraftables()
     for i, craftable in ipairs(craftables) do
         craftables[i] = craftable.getItemStack()
     end
+    craftables.n = nil -- transform the array into a regular (sparse) table
 
     -- Ignore the craftables we already know
     for _, recipe in ipairs(recipes) do
-        -- Using pairs() because craftables is a sparse array
         for i, candidate in pairs(craftables) do
             if contains(candidate, recipe.item) then
                 craftables[i] = nil
