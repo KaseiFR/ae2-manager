@@ -258,7 +258,7 @@ function updateRecipes(learnNewRecipes)
     -- Index our recipes
     local index = {}
     for _, recipe in ipairs(recipes) do
-        local key = recipe.item.name .. '$' .. recipe.item.damage
+        local key = itemKey(recipe.item, recipe.item.label ~= nil)
         index[key] = { recipe=recipe, matches={} }
     end
     --log('recipe index', computer.uptime() - start)
@@ -270,7 +270,7 @@ function updateRecipes(learnNewRecipes)
 
     -- Match all items with our recipes
     for _, item in ipairs(items) do
-        local key = item.name .. '$' .. math.floor(item.damage)
+        local key = itemKey(item, item.hasTag)
         local indexed = index[key]
         if indexed then
             table.insert(indexed.matches, item)
@@ -283,6 +283,11 @@ function updateRecipes(learnNewRecipes)
                 label = item.label,
                 wanted = 0,
             }
+            if item.hasTag then
+                -- By default, OC doesn't expose items NBT, so as a workaround we use the label as
+                -- an additional discriminant. This is not perfect (still some collisions, and locale-dependent)
+                recipe.item.label = recipe.label
+            end
             table.insert(recipes, recipe)
             index[key] = { recipe=recipe, matches={item} }
         end
@@ -291,7 +296,9 @@ function updateRecipes(learnNewRecipes)
 
     -- Check the recipes
     for _, entry in pairs(index) do
-        local recipe, matches = entry.recipe, entry.matches
+        local recipe = entry.recipe
+        local matches = filter(entry.matches, function(e) return contains(e, recipe.item) end)
+        --log(recipe.label, 'found', #matches, 'matches')
         local craftable = false
         recipe.error = nil
 
@@ -316,6 +323,15 @@ function updateRecipes(learnNewRecipes)
         end
     end
     --log('recipes check', computer.uptime() - start)
+end
+
+function itemKey(item, withLabel)
+    local key = item.name .. '$' .. math.floor(item.damage)
+    if withLabel then
+        --log('using label for', item.label)
+        key = key .. '$' .. item.label
+    end
+    return key
 end
 
 function updateStatus(duration)
@@ -386,6 +402,14 @@ function equals(t1, t2)
     end
 
     return true
+end
+
+function filter(array, predicate)
+    local res = {}
+    for _, v in ipairs(array) do
+        if predicate(v) then table.insert(res, v) end
+    end
+    return res
 end
 
 function contains(haystack, needle)
@@ -586,11 +610,12 @@ function buildGui()
     end)
 
     -- right panel (item details)
-    local reloadBtn = configView:addChild(GUI.button(configView.width/2+2, 2, configView.width/2-2, 3, C_BADGE, C_BADGE_TEXT, C_BADGE, C_STATUS_PRESSED, "Reload recipes"))
+    local reloadBtn = configView:addChild(GUI.button(configView.width/2+2, 2, configView.width/2-2, 3,
+                                                     C_BADGE, C_BADGE_TEXT, C_BADGE, C_STATUS_PRESSED, "Reload recipes"))
     reloadBtn.onTouch = function(app, self)
         event.push('reload_recipes')
     end
-    local itemConfigPanel = configView:addChild(GUI.layout(reloadBtn.x, reloadBtn.y + reloadBtn.height + 1, reloadBtn.width, configView.height-reloadBtn.height-3, 1, 1))
+    local itemConfigPanel = configView:addChild(GUI.layout(reloadBtn.x, reloadBtn.y + reloadBtn.height + 1, reloadBtn.width, configView.height-reloadBtn.height-7, 1, 1))
     configView:addChild(GUI.panel(itemConfigPanel.x, itemConfigPanel.y, itemConfigPanel.width, itemConfigPanel.height, C_BADGE)):moveBackward()
     itemConfigPanel:setAlignment(1, 1, GUI.ALIGNMENT_HORIZONTAL_CENTER, GUI.ALIGNMENT_VERTICAL_TOP)
     itemConfigPanel:setMargin(1, 1, .5, 1)
@@ -618,6 +643,19 @@ function buildGui()
         end
         super(app, self, key, ...)
     end)
+
+    local resetRecipeBtn = configView:addChild(GUI.button(itemConfigPanel.x, itemConfigPanel.y + itemConfigPanel.height + 1, itemConfigPanel.width, 3,
+                                                          C_BADGE, C_BADGE_TEXT, C_BADGE, C_STATUS_PRESSED, "Reset"))
+    resetRecipeBtn.onTouch = function(app, self)
+        local recipe = configView[SYMBOL_CONFIG_RECIPE]
+        if not recipe then return end
+        for i, candidate in ipairs(recipes) do
+            if (candidate == recipe) then
+                table.remove(recipes, i)
+                return
+            end
+        end
+    end
 
     -- Status bar
     statusBar:addChild(GUI.panel(1, 1, statusBar.width, statusBar.height, C_STATUS_BAR))
