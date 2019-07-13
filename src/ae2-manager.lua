@@ -40,7 +40,8 @@ local allowedCpus = -2
 -- Maximum size of the crafting requests
 local maxBatch = 64
 -- How often to check the AE system, in second
-local checkInterval = 5
+local fullCheckInterval = 10        -- full scan
+local craftingCheckInterval = 1     -- only check ongoing crafting
 -- Where to save the config
 local configPath = '/home/ae2-manager.cfg'
 
@@ -75,8 +76,7 @@ function main()
     end))
     table.insert(background, event.listen("redraw", function (key) app:draw() end))
     table.insert(background, event.listen("reload_recipes", failFast(loadCraftables)))
-    table.insert(background, event.timer(.5, failFast(checkCrafting), math.huge))
-    -- The AE loop is extremely slow (probably because of FFI or balance), and scales badly with the number of recipes
+    table.insert(background, event.timer(craftingCheckInterval, failFast(checkCrafting), math.huge))
     table.insert(background, thread.create(failFast(ae2Loop)))
     table.insert(background, thread.create(failFast(function() app:start() end)))
 
@@ -195,7 +195,7 @@ end
 
 function ae2Loop()
     while true do
-        event.pull(checkInterval, 'ae2_loop')
+        event.pull(fullCheckInterval, 'ae2_loop')
         --log('AE2 loop in')
         ae2Run()
         --log('AE2 loop out')
@@ -248,65 +248,74 @@ function yield(msg)
 end
 
 function loadCraftables()
-    -- Find all AE craftables
-    local craftables, err = ae2.getCraftables()
-    if err then
-        log('ae2.getCraftables', err)
-        return
-    end
-    for i, craftable in ipairs(craftables) do
-        craftables[i] = craftable.getItemStack()
-    end
-    craftables.n = nil -- transform the array into a regular (sparse) table
-
-    -- Ignore the craftables we already know
-    for _, recipe in ipairs(recipes) do
-        for i, candidate in pairs(craftables) do
-            if contains(candidate, recipe.item) then
-                craftables[i] = nil
-            end
-        end
-    end
-
-    -- Add new recipes
-    for _, craftable in pairs(craftables) do
-        table.insert(recipes, {
-            item = {
-                name = craftable.name,
-                damage = math.floor(craftable.damage)
-            },
-            label = craftable.label,
-            wanted = 0,
-        })
-    end
+    updateRecipes(true)
+    saveRecipes()
 end
 
-function updateRecipes()
+function updateRecipes(learnNewRecipes)
+    local start = computer.uptime()
+
+    -- Index our recipes
+    local index = {}
     for _, recipe in ipairs(recipes) do
+        local key = recipe.item.name .. '$' .. recipe.item.damage
+        index[key] = { recipe=recipe, matches={} }
+    end
+    --log('recipe index', computer.uptime() - start)
+
+    -- Get all items in the network
+    local items, err = ae2.getItemsInNetwork()  -- takes a full tick (to sync with the main thread?)
+    if err then error(err) end
+    --log('ae2.getItemsInNetwork', computer.uptime() - start, 'with', #items, 'items')
+
+    -- Match all items with our recipes
+    for _, item in ipairs(items) do
+        local key = item.name .. '$' .. math.floor(item.damage)
+        local indexed = index[key]
+        if indexed then
+            table.insert(indexed.matches, item)
+        elseif learnNewRecipes and item.isCraftable then
+            local recipe = {
+                item = {
+                    name = item.name,
+                    damage = math.floor(item.damage)
+                },
+                label = item.label,
+                wanted = 0,
+            }
+            table.insert(recipes, recipe)
+            index[key] = { recipe=recipe, matches={item} }
+        end
+    end
+    --log('group items', computer.uptime() - start)
+
+    -- Check the recipes
+    for _, entry in pairs(index) do
+        local recipe, matches = entry.recipe, entry.matches
+        local craftable = false
         recipe.error = nil
 
         checkFuture(recipe)
 
-        -- TODO: bench query all items once vs lots of smaller queries
-        yield('yield '..recipe.label)
-        local items, err = ae2.getItemsInNetwork(recipe.item)
-        if err then
+        if #matches == 0 then
             recipe.stored = 0
-            recipe.error = 'ae2.getItemsInNetwork ' .. tostring(err)
-        elseif #items == 0 then
-            recipe.stored = 0
-        elseif #items == 1 then
-            local item = items[1]
+        elseif #matches == 1 then
+            local item = matches[1]
             recipe.stored = math.floor(item.size)
-            if not item.isCraftable then
-                -- Warn the user as soon as an item is not craftable rather than wait to try
-                recipe.error = 'Not craftable'
-            end
+            craftable = item.isCraftable
         else
+            local id = recipe.item.name .. ':' .. recipe.item.damage
             recipe.stored = 0
-            recipe.error = 'Match multiple item'
+            recipe.error = id .. ' match ' .. #matches .. ' items'
+            -- log('Recipe', recipe.label, 'matches:', pretty(matches))
+        end
+
+        if not recipe.error and recipe.wanted > 0 and not craftable then
+            -- Warn the user as soon as an item is not craftable rather than wait to try
+            recipe.error = 'Not craftable'
         end
     end
+    --log('recipes check', computer.uptime() - start)
 end
 
 function updateStatus(duration)
@@ -577,7 +586,7 @@ function buildGui()
     end)
 
     -- right panel (item details)
-    local reloadBtn = configView:addChild(GUI.button(configView.width/2+2, 2, configView.width/2-2, 3, C_BADGE, C_BADGE_TEXT, C_BADGE, C_STATUS_PRESSED, "Reload recipes (slow)"))
+    local reloadBtn = configView:addChild(GUI.button(configView.width/2+2, 2, configView.width/2-2, 3, C_BADGE, C_BADGE_TEXT, C_BADGE, C_STATUS_PRESSED, "Reload recipes"))
     reloadBtn.onTouch = function(app, self)
         event.push('reload_recipes')
     end
