@@ -61,8 +61,7 @@ function main()
 
     initAe2()
     loadRecipes()
-    --loadCraftables()
-    ae2Run()
+    ae2Run(true)
 
     local app = buildGui()
     app:draw(true)
@@ -75,7 +74,7 @@ function main()
         end
     end))
     table.insert(background, event.listen("redraw", function (key) app:draw() end))
-    table.insert(background, event.listen("reload_recipes", failFast(loadCraftables)))
+    table.insert(background, event.listen("save", failFast(saveRecipes)))
     table.insert(background, event.timer(craftingCheckInterval, failFast(checkCrafting), math.huge))
     table.insert(background, thread.create(failFast(ae2Loop)))
     table.insert(background, thread.create(failFast(function() app:start() end)))
@@ -113,6 +112,11 @@ function log(...)
         io.stderr:write(tostring(v))
     end
     io.stderr:write('\n')
+end
+
+function logRam(msg)
+    --free, total = computer.freeMemory(), computer.totalMemory()
+    --log(msg, 'RAM', (total - free) * 100 / total, '%')
 end
 
 function pretty(x)
@@ -195,18 +199,21 @@ end
 
 function ae2Loop()
     while true do
-        event.pull(fullCheckInterval, 'ae2_loop')
+        local e1, e2 = event.pull(fullCheckInterval, 'ae2_loop')
+        logRam('loop')
         --log('AE2 loop in')
-        ae2Run()
+        ae2Run(e2 == 'reload_recipes')
         --log('AE2 loop out')
         event.push('redraw')
     end
 end
 
 
-function ae2Run()
+function ae2Run(learnNewRecipes)
     local start = computer.uptime()
-    updateRecipes()
+    updateRecipes(learnNewRecipes)
+    logRam('recipes')
+    -- logRam('recipes (post-gc)')
 
     local finder = coroutine.create(findRecipeWork)
     while hasFreeCpu() do
@@ -223,8 +230,6 @@ function ae2Run()
             break
         end
     end
-
-    saveRecipes()
 
     local duration = computer.uptime() - start
     updateStatus(duration)
@@ -245,11 +250,6 @@ function yield(msg)
     --local _, h = gpu.getViewport()
     --gpu.set(1, h, msg)
     os.sleep()
-end
-
-function loadCraftables()
-    updateRecipes(true)
-    saveRecipes()
 end
 
 function updateRecipes(learnNewRecipes)
@@ -323,6 +323,10 @@ function updateRecipes(learnNewRecipes)
         end
     end
     --log('recipes check', computer.uptime() - start)
+
+    if learnNewRecipes then
+        event.push('save')
+    end
 end
 
 function itemKey(item, withLabel)
@@ -613,7 +617,7 @@ function buildGui()
     local reloadBtn = configView:addChild(GUI.button(configView.width/2+2, 2, configView.width/2-2, 3,
                                                      C_BADGE, C_BADGE_TEXT, C_BADGE, C_STATUS_PRESSED, "Reload recipes"))
     reloadBtn.onTouch = function(app, self)
-        event.push('reload_recipes')
+        event.push('ae2_loop', 'reload_recipes')
     end
     local itemConfigPanel = configView:addChild(GUI.layout(reloadBtn.x, reloadBtn.y + reloadBtn.height + 1, reloadBtn.width, configView.height-reloadBtn.height-7, 1, 1))
     configView:addChild(GUI.panel(itemConfigPanel.x, itemConfigPanel.y, itemConfigPanel.width, itemConfigPanel.height, C_BADGE)):moveBackward()
@@ -634,6 +638,7 @@ function buildGui()
             wantedInput.onInputFinished = function(app, object)
                 recipe.wanted = tonumber(object.text) or error('cannot parse '..object.text)
                 event.push('ae2_loop')
+                event.push('save')
             end
 
             -- TODO: add remove/hide option
