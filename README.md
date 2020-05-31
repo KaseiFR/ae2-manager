@@ -15,7 +15,7 @@ Tested on 1.12, may work on older versions, but probably not after the 1.13 _fla
 
 # Installation
 
-This program requires [IgorTimofeev's GUI library](https://github.com/IgorTimofeev/GUI#installation), follow the
+This program requires [IgorTimofeev's GUI library](https://github.com/IgorTimofeev/GUI/blob/043b5948fafd28aa90da1a3814cb0631b7caf227/README.md#installation), follow the
 instructions on the repo, and then download this program:
 
 ```
